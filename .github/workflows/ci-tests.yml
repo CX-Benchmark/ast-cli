@@ -275,9 +275,6 @@ jobs:
       - name: Build binary
         run: go build -o ./bin/cx ./cmd
 
-      - name: Install gocovmerge
-        run: go install github.com/wadey/gocovmerge@latest
-
       - name: Install pre-commit
         if: matrix.needs_precommit == 'true'
         env:
@@ -359,12 +356,6 @@ jobs:
             run_tests "$FAILED" "$COVER_R1" "retry1_output.log" "30m"
             echo "::endgroup::"
 
-            if [ -f "$COVER_R1" ]; then
-              gocovmerge "$COVER_FILE" "$COVER_R1" > merged.out
-              mv merged.out "$COVER_FILE"
-              rm -f "$COVER_R1"
-            fi
-
             FAILED2=$(grep -E "^--- FAIL: " retry1_output.log | awk '{print $3}' | paste -sd '|' - || true)
 
             # ── Retry 2 ────────────────────────────────────────────────────────
@@ -374,12 +365,6 @@ jobs:
               echo "::group::Attempt 3 — ${MATRIX_LABEL}"
               run_tests "$FAILED2" "$COVER_R2" "retry2_output.log" "30m"
               echo "::endgroup::"
-
-              if [ -f "$COVER_R2" ]; then
-                gocovmerge "$COVER_FILE" "$COVER_R2" > merged.out
-                mv merged.out "$COVER_FILE"
-                rm -f "$COVER_R2"
-              fi
 
               FINAL_FAILED=$(grep -E "^--- FAIL: " retry2_output.log | awk '{print $3}' || true)
               if [ -n "$FINAL_FAILED" ]; then
@@ -396,7 +381,11 @@ jobs:
         uses: actions/upload-artifact@c7d193f32edcb7bfad88892161225aeda64e9392 #v4
         with:
           name: coverage-${{ matrix.name }}
-          path: cover-${{ matrix.name }}.out
+          # Retry profiles (-r1/-r2) are merged in the merge-coverage job
+          path: |
+            cover-${{ matrix.name }}.out
+            cover-${{ matrix.name }}-r1.out
+            cover-${{ matrix.name }}-r2.out
           retention-days: 7
           if-no-files-found: warn
 
@@ -507,15 +496,6 @@ jobs:
     needs: integration-tests
     runs-on: cx-public-ubuntu-x64
     if: always()
-    env:
-      CX_BASE_URI: ${{ secrets.CX_BASE_URI }}
-      CX_CLIENT_ID: ${{ secrets.CX_CLIENT_ID }}
-      CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
-      CX_BASE_AUTH_URI: ${{ secrets.CX_BASE_AUTH_URI }}
-      CX_AST_USERNAME: ${{ secrets.CX_AST_USERNAME }}
-      CX_AST_PASSWORD: ${{ secrets.CX_AST_PASSWORD }}
-      CX_APIKEY: ${{ secrets.CX_APIKEY }}
-      CX_TENANT: ${{ secrets.CX_TENANT }}
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v6
@@ -526,9 +506,6 @@ jobs:
         uses: actions/setup-go@4d34df0c2316fe8122ab82dc22947d607c0c91f9 #v4
         with:
           go-version: '1.25.x'
-
-      - name: Install gocovmerge
-        run: go install github.com/wadey/gocovmerge@latest
 
       - name: Download all coverage artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 #v4
@@ -544,8 +521,9 @@ jobs:
             exit 1
           fi
           echo "Merging: $COVER_FILES"
+          # gocovmerge is pinned as a tool dependency in go.mod / go.sum
           # shellcheck disable=SC2086
-          gocovmerge $COVER_FILES > cover.out
+          go tool gocovmerge $COVER_FILES > cover.out
           go tool cover -html=cover.out -o coverage.html
 
       - name: Check coverage threshold (>= 75%)
@@ -570,6 +548,15 @@ jobs:
           retention-days: 7
 
       - name: Post-run project cleanup
+        env:
+          CX_BASE_URI: ${{ secrets.CX_BASE_URI }}
+          CX_CLIENT_ID: ${{ secrets.CX_CLIENT_ID }}
+          CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
+          CX_BASE_AUTH_URI: ${{ secrets.CX_BASE_AUTH_URI }}
+          CX_AST_USERNAME: ${{ secrets.CX_AST_USERNAME }}
+          CX_AST_PASSWORD: ${{ secrets.CX_AST_PASSWORD }}
+          CX_APIKEY: ${{ secrets.CX_APIKEY }}
+          CX_TENANT: ${{ secrets.CX_TENANT }}
         run: go test -v github.com/checkmarx/ast-cli/test/cleandata
 
   # ─────────────────────────────────────────────────────────────────────────────

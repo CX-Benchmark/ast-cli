@@ -67,6 +67,7 @@ require (
 	github.com/secDre4mer/pkcs7 v0.0.0-20240322103146-665324a4461d // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/wadey/gocovmerge v0.0.0-20160331181800-b5bfa59ec0ad // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
 )
@@ -340,3 +341,5 @@ replace github.com/opencontainers/selinux => github.com/opencontainers/selinux v
 replace github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.0
 
 replace github.com/zalando/go-keyring => github.com/checkmarx/go-keyring v0.0.0-20260812105354-1168609d33ac
+
+tool github.com/wadey/gocovmerge
