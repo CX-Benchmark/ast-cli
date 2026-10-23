@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	errorConstants "github.com/checkmarx/ast-cli/internal/constants/errors"
@@ -59,6 +60,7 @@ func (u *UploadsHTTPWrapper) UploadFile(sourcesFile string, featureFlagsWrapper 
 	if err != nil {
 		return nil, errors.Errorf("Failed creating pre-signed URL - %s", err.Error())
 	}
+	registerPresignedURL(*preSignedURL)
 	preSignedURLBytes, err := json.Marshal(*preSignedURL)
 	if err != nil {
 		return nil, errors.Errorf("Failed to marshal pre-signed URL - %s", err.Error())
@@ -93,7 +95,7 @@ func (u *UploadsHTTPWrapper) UploadFile(sourcesFile string, featureFlagsWrapper 
 	resp, err := SendHTTPRequestByFullURLContentLength(http.MethodPut, *preSignedURL, file, stat.Size(), useAccessToken, NoTimeout, accessToken, true)
 	if err != nil {
 
-		return nil, errors.Errorf("Invoking HTTP request to upload file failed - %s", err.Error())
+		return nil, errors.Errorf("Invoking HTTP request to upload file failed - %s", redactUploadURLError(err).Error())
 	}
 
 	defer func() {
@@ -121,6 +123,32 @@ func generateUploadFileFailedMessage(preSignedURL string) string {
 		msg = fmt.Sprintf(errorConstants.FailedUploadFileMsgWithDomain, parsedURL.Host)
 	}
 	return msg
+}
+
+// registerPresignedURL masks a pre-signed URL in all logger output, in every form it can be logged:
+// raw (request errors), request URI (request dump) and JSON-escaped (request bodies).
+func registerPresignedURL(preSignedURL string) {
+	logger.RegisterSensitiveValue(preSignedURL)
+	if parsedURL, err := url.Parse(preSignedURL); err == nil && parsedURL.RequestURI() != "/" {
+		logger.RegisterSensitiveValue(parsedURL.RequestURI())
+	}
+	if preSignedURLBytes, err := json.Marshal(preSignedURL); err == nil {
+		logger.RegisterSensitiveValue(strings.Trim(string(preSignedURLBytes), `"`))
+	}
+}
+
+// redactUploadURLError strips the pre-signed URL from HTTP client errors (*url.Error embeds the full URL),
+// which are returned to the user and printed without passing through the logger's sanitization.
+func redactUploadURLError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if parsedURL, parseErr := url.Parse(urlErr.URL); parseErr == nil && parsedURL.Host != "" {
+			urlErr.URL = parsedURL.Scheme + "://" + parsedURL.Host
+		} else {
+			urlErr.URL = "***"
+		}
+	}
+	return err
 }
 
 func (u *UploadsHTTPWrapper) getPresignedURLForUploading() (*string, error) {
@@ -198,6 +226,7 @@ func (u *UploadsHTTPWrapper) UploadFileInMultipart(sourcesFile string, featureFl
 		if err != nil {
 			return nil, errors.Errorf("Failed to get presigned URL for part%d - %s", partNumber, err.Error())
 		}
+		registerPresignedURL(presignedURL)
 
 		if partNumber == 1 {
 			presignedURLPart1 = presignedURL
@@ -272,7 +301,7 @@ func getPresignedURLForMultipartUploading(response StartMultipartUploadResponse,
 		return "", err
 	}
 
-	resp, err := SendHTTPRequest(http.MethodPost, path, bytes.NewBuffer(jsonBytes), true, clientTimeout)
+	resp, err := SendPrivateHTTPRequest(http.MethodPost, path, bytes.NewBuffer(jsonBytes), clientTimeout, true)
 	if err != nil {
 		return "", err
 	}
@@ -330,7 +359,7 @@ func uploadPart(preSignedURL, sourcesFile string, featureFlagsWrapper FeatureFla
 	useAccessToken := flagResponse.Status
 	resp, err := SendHTTPRequestByFullURLContentLength(http.MethodPut, preSignedURL, file, stat.Size(), useAccessToken, NoTimeout, accessToken, true)
 	if err != nil {
-		return "", err
+		return "", redactUploadURLError(err)
 	}
 
 	defer func() {
